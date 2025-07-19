@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Vid Vibe - YouTube Teacher Bot</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <button id="dark-mode-toggle" aria-label="Toggle dark mode"></button>
+    <h1>🎓 Vid Vibe</h1>
+
+    <!-- Toast Notification Container -->
+    <div id="toast-container"></div>
+
+    <div class="section">
+        <form method="post" id="transcript-form">
+            <label for="youtube_url">📺 YouTube Video URL</label>
+            <input type="text" name="youtube_url" id="youtube_url" placeholder="https://youtube.com/...">
+            <button type="submit">🎬 Generate Transcript</button>
+            <div class="spinner" id="transcript-spinner" style="display:none;">
+                <span class="spinner-circle"></span>
+            </div>
+        </form>
+    </div>
+
+    {% if summary %}
+    <div class="section summary-box">
+        <h3>🧠 Summary:</h3>
+        <p>{{ summary|safe }}</p>
+    </div>
+    {% endif %}
+
+    {% if transcript %}
+    <div class="section transcript-box">
+        <h3>📄 Transcript:</h3>
+        <pre>{{ transcript[:3000] }}{% if transcript|length > 3000 %}...{% endif %}</pre>
+        <a class="download-link" href="/download">⬇ Download Full Transcript</a>
+    </div>
+    {% endif %}
+
+    <div class="section">
+        <form method="post" id="question-form">
+            <label for="question">❓ Ask a Question</label>
+            <textarea name="question" id="question" placeholder="What is explained in this video?" rows="1" style="resize:none; overflow:hidden;"></textarea>
+            <div id="question-char-count" style="font-size:0.9em; color:#64748b; text-align:right; margin-top:2px;"></div>
+            <button type="button" id="clear-all-btn" class="clear-btn" style="margin-top:8px; align-self:flex-end;"><span role="img" aria-label="Clear">🧹</span> Clear All</button>
+
+            <label for="model">🤖 Select Model:</label>
+            <select name="model">
+                <option value="gpt-3.5-turbo">GPT-3.5 (Fast, Cheaper)</option>
+                <option value="gpt-4">GPT-4 (More Accurate)</option>
+            </select>
+
+            <button type="submit">🔍 Ask</button>
+            <div class="spinner" id="question-spinner" style="display:none;">
+                <span class="spinner-circle"></span>
+            </div>
+        </form>
+
+        {% if answer %}
+        <div class="answer-box">
+            <strong>💡 Answer:</strong>
+            <p>{{ answer|safe }}</p>
+        </div>
+        {% endif %}
+    </div>
+
+<script>
+function scrollToAnswerBox() {
+    const answerBox = document.querySelector('.answer-box');
+    if (answerBox) {
+        answerBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+}
+
+// Spinner logic
+function hideAllSpinners() {
+    document.getElementById('transcript-spinner').style.display = 'none';
+    document.getElementById('question-spinner').style.display = 'none';
+}
+
+document.getElementById('transcript-form').addEventListener('submit', function() {
+    document.getElementById('transcript-spinner').style.display = 'block';
+    document.getElementById('question-spinner').style.display = 'none';
+});
+document.getElementById('question-form').addEventListener('submit', function() {
+    document.getElementById('question-spinner').style.display = 'block';
+    document.getElementById('transcript-spinner').style.display = 'none';
+});
+
+// --- Toast Notification System with Close Button ---
+function showToast(message, type = 'success') {
+    const toastContainer = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = 'toast ' + (type === 'error' ? 'toast-error' : 'toast-success');
+    toast.innerHTML = message + '<button class="toast-close" aria-label="Close">&times;</button>';
+    toastContainer.appendChild(toast);
+    const closeBtn = toast.querySelector('.toast-close');
+    let timeout = setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 400);
+    }, 3400);
+    closeBtn.addEventListener('click', () => {
+        clearTimeout(timeout);
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 400);
+    });
+}
+
+// --- YouTube URL validation ---
+function isValidYouTubeUrl(url) {
+    // Accepts most YouTube video URL formats
+    const pattern = /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)[A-Za-z0-9_-]{11}(\S*)?$/;
+    // Also allow URLs with extra params after the video ID
+    // Accepts: https://www.youtube.com/watch?v=VIDEOID, https://youtu.be/VIDEOID, etc.
+    return pattern.test(url.trim());
+}
+
+// --- Prevent empty/invalid YouTube link on transcript form ---
+document.getElementById('transcript-form').addEventListener('submit', function(e) {
+    const url = document.getElementById('youtube_url').value.trim();
+    if (!url) {
+        hideAllSpinners();
+        showToast('⚠ Please enter a YouTube link before submitting.', 'error');
+        e.preventDefault();
+        return false;
+    }
+    if (!isValidYouTubeUrl(url)) {
+        hideAllSpinners();
+        showToast('❌ Invalid YouTube link. Please check and try again.', 'error');
+        e.preventDefault();
+        return false;
+    }
+});
+
+// --- Prevent question before transcript is loaded ---
+document.getElementById('question-form').addEventListener('submit', function(e) {
+    const transcriptBox = document.querySelector('.transcript-box');
+    const question = document.getElementById('question').value.trim();
+    if (!transcriptBox || transcriptBox.style.display === 'none') {
+        hideAllSpinners();
+        showToast('⚠ Please submit a YouTube link first to load the video transcript.', 'error');
+        e.preventDefault();
+        return false;
+    }
+    if (!question) {
+        hideAllSpinners();
+        showToast('⚠ Please enter a question before submitting.', 'error');
+        e.preventDefault();
+        return false;
+    }
+});
+
+// Dark mode toggle logic
+const darkModeToggle = document.getElementById('dark-mode-toggle');
+const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+function setDarkMode(enabled) {
+    if (enabled) {
+        document.body.classList.add('dark-mode');
+        darkModeToggle.innerHTML = '🌙';
+        localStorage.setItem('darkMode', 'true');
+    } else {
+        document.body.classList.remove('dark-mode');
+        darkModeToggle.innerHTML = '☀';
+        localStorage.setItem('darkMode', 'false');
+    }
+}
+// On load, set mode from localStorage or system preference and set icon
+window.addEventListener('DOMContentLoaded', () => {
+    const saved = localStorage.getItem('darkMode');
+    if (saved === 'true' || (saved === null && prefersDark)) {
+        setDarkMode(true);
+    } else {
+        setDarkMode(false);
+    }
+});
+darkModeToggle.addEventListener('click', () => {
+    setDarkMode(!document.body.classList.contains('dark-mode'));
+});
+
+// Auto-expand textarea and character counter
+const questionTextarea = document.getElementById('question');
+const charCount = document.getElementById('question-char-count');
+if (questionTextarea && charCount) {
+    const maxLines = 6;
+    const lineHeight = 24; // px, adjust if needed
+    questionTextarea.addEventListener('input', function() {
+        this.style.height = 'auto';
+        let lines = (this.value.match(/\n/g) || []).length + 1;
+        if (lines > maxLines) lines = maxLines;
+        this.style.height = Math.min(this.scrollHeight, maxLines * lineHeight) + 'px';
+        charCount.textContent = this.value.length + ' characters';
+    });
+    // Initialize
+    questionTextarea.dispatchEvent(new Event('input'));
+}
+
+// Clear All functionality
+document.getElementById('clear-all-btn').addEventListener('click', function() {
+    // Clear question textarea and counter
+    const question = document.getElementById('question');
+    const charCount = document.getElementById('question-char-count');
+    if (question) {
+        question.value = '';
+        question.style.height = 'auto';
+        charCount.textContent = '0 characters';
+    }
+    // Hide transcript, summary, and answer sections
+    const summaryBox = document.querySelector('.summary-box');
+    if (summaryBox) summaryBox.style.display = 'none';
+    const transcriptBox = document.querySelector('.transcript-box');
+    if (transcriptBox) transcriptBox.style.display = 'none';
+    const answerBox = document.querySelector('.answer-box');
+    if (answerBox) answerBox.style.display = 'none';
+});
+
+// Hide spinner when summary, transcript, or answer is rendered
+window.addEventListener('DOMContentLoaded', () => {
+    const mainContainer = document.body; // You can scope this to a more specific container if needed
+    const observer = new MutationObserver((mutationsList, observer) => {
+        for (const mutation of mutationsList) {
+            if (mutation.type === 'childList') {
+                const answerBox = document.querySelector('.answer-box');
+                const summaryBox = document.querySelector('.summary-box');
+                const transcriptBox = document.querySelector('.transcript-box');
+                if (answerBox || summaryBox || transcriptBox) {
+                    hideAllSpinners();
+                    // Scroll to summary if just generated
+                    if (summaryBox && summaryBox.offsetParent !== null && !answerBox) {
+                        summaryBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                    // Scroll to answer if just answered
+                    if (answerBox && answerBox.offsetParent !== null) {
+                        answerBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                    observer.disconnect();
+                    break;
+                }
+            }
+        }
+    });
+    observer.observe(mainContainer, { childList: true, subtree: true });
+});
+</script>
+{% if success_message %}
+<script>showToast("{{ success_message|escapejs }}", 'success');</script>
+{% endif %}
+{% if error_message %}
+<script>showToast("{{ error_message|escapejs }}", 'error');</script>
+{% endif %}
+</body>
+</html>
