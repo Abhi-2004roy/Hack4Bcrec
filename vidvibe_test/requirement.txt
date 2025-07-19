@@ -1,0 +1,5 @@
+Flask
+openai
+yt-dlp
+whisper
+python-dotenv
