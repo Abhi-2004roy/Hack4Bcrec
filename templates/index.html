@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Vid Vibe - YouTube Teacher Bot</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <button id="dark-mode-toggle" aria-label="Toggle dark mode">
+        <span class="icon">🌙</span>
+    </button>
+    
+    <div class="container">
+        <h1>🎓 Vid Vibe</h1>
+        
+        <div id="toast-container"></div>
+        
+        <div class="main-layout">
+            <!-- Left Sidebar -->
+            <div class="left-sidebar">
+                <!-- YouTube URL Input Section -->
+                <div class="input-section">
+                    <form method="post" id="transcript-form">
+                        <input type="text" name="youtube_url" id="youtube_url" placeholder="Paste YouTube link here..." required>
+                        <button type="submit" id="generate-transcript-btn">Get Transcript</button>
+                        <div class="spinner" id="transcript-spinner" style="display:none;">
+                            <div class="spinner-circle"></div>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Summary Section (only shows when summary exists) -->
+                {% if summary %}
+                <div class="summary-section" id="summary-section">
+                    <h3>📝 Summary</h3>
+                    <div class="summary-content">{{ summary|safe }}</div>
+                    
+                    <!-- Audio Player Section -->
+                    <div class="audio-section">
+                        <audio controls class="audio-player">
+                            <source src="/audio" type="audio/mpeg">
+                            Your browser does not support the audio element.
+                        </audio>
+                        <a href="/download-audio" class="download-btn audio-download">Download Audio</a>
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- Transcript Section (only shows when transcript exists) -->
+                {% if transcript %}
+                <div class="transcript-section" id="transcript-section">
+                    <h3>📄 Transcript</h3>
+                    <div class="transcript-content">{{ transcript[:2000] }}{% if transcript|length > 2000 %}...{% endif %}</div>
+                    <a href="/download" class="download-btn transcript-download">Download Transcript</a>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Right Main Area -->
+            <div class="right-main">
+                <!-- Q&A History Section -->
+                <div class="qa-history-section">
+                    <h3>💬 Question & Answer History</h3>
+                    <div class="qa-history-content" id="qa-history-content">
+                        {% if qa_history %}
+                        {% for qa in qa_history %}
+                        <div class="qa-item">
+                            <div class="question">
+                                <strong>Q:</strong> {{ qa.question }}
+                            </div>
+                            <div class="answer">
+                                <strong>A:</strong> {{ qa.answer|safe }}
+                            </div>
+                        </div>
+                        {% endfor %}
+                        {% else %}
+                        <div class="qa-placeholder">
+                            No questions asked yet. Generate a transcript first, then ask questions about the video content.
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Question Input Section -->
+                <div class="question-input-section">
+                    <form method="post" id="question-form">
+                        <div class="question-row">
+                            <textarea name="question" id="question" placeholder="Type your question here..." rows="2" required></textarea>
+                            <button type="button" id="clear-all-btn" class="clear-btn">Clear All</button>
+                        </div>
+                        
+                        <div class="controls-row">
+                            <select name="model" id="model-select" class="model-select">
+                                <option value="gpt-3.5-turbo" {% if selected_model == 'gpt-3.5-turbo' %}selected{% endif %}>GPT-3.5 (Fast, Cheaper)</option>
+                                <option value="gpt-4" {% if selected_model == 'gpt-4' %}selected{% endif %}>GPT-4 (More Accurate)</option>
+                            </select>
+                            <button type="submit" id="ask-btn">Ask Question</button>
+                        </div>
+                        
+                        <div class="spinner" id="question-spinner" style="display:none;">
+                            <div class="spinner-circle"></div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Dark mode toggle functionality
+        const darkModeToggle = document.getElementById('dark-mode-toggle');
+        const body = document.body;
+        
+        // Check for saved theme preference or default to light mode
+        const savedTheme = localStorage.getItem('theme');
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        
+        // Set initial theme
+        if (savedTheme === 'dark' || (!savedTheme && prefersDark)) {
+            body.classList.add('dark-mode');
+            darkModeToggle.querySelector('.icon').textContent = '☀️';
+        } else {
+            body.classList.remove('dark-mode');
+            darkModeToggle.querySelector('.icon').textContent = '🌙';
+        }
+        
+        // Toggle theme
+        darkModeToggle.addEventListener('click', () => {
+            body.classList.toggle('dark-mode');
+            const isDark = body.classList.contains('dark-mode');
+            
+            if (isDark) {
+                darkModeToggle.querySelector('.icon').textContent = '☀️';
+                localStorage.setItem('theme', 'dark');
+            } else {
+                darkModeToggle.querySelector('.icon').textContent = '🌙';
+                localStorage.setItem('theme', 'light');
+            }
+        });
+
+        // Toast notification system
+        function showToast(message, type = 'success') {
+            const toastContainer = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            toast.innerHTML = `
+                <span>${message}</span>
+                <button class="toast-close" aria-label="Close">&times;</button>
+            `;
+            
+            toastContainer.appendChild(toast);
+            
+            const closeBtn = toast.querySelector('.toast-close');
+            let timeout = setTimeout(() => {
+                toast.style.opacity = '0';
+                setTimeout(() => toast.remove(), 300);
+            }, 4000);
+            
+            closeBtn.addEventListener('click', () => {
+                clearTimeout(timeout);
+                toast.style.opacity = '0';
+                setTimeout(() => toast.remove(), 300);
+            });
+        }
+
+        // Form validation and submission
+        function isValidYouTubeUrl(url) {
+            const pattern = /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)[A-Za-z0-9_-]{11}(\S*)?$/;
+            return pattern.test(url.trim());
+        }
+
+        // Transcript form submission
+        document.getElementById('transcript-form').addEventListener('submit', function(e) {
+            const url = document.getElementById('youtube_url').value.trim();
+            
+            if (!url) {
+                showToast('⚠️ Please enter a YouTube URL', 'error');
+                e.preventDefault();
+                return;
+            }
+            
+            if (!isValidYouTubeUrl(url)) {
+                showToast('❌ Invalid YouTube URL format', 'error');
+                e.preventDefault();
+                return;
+            }
+            
+            document.getElementById('transcript-spinner').style.display = 'block';
+        });
+
+        // Question form submission
+        document.getElementById('question-form').addEventListener('submit', function(e) {
+            const question = document.getElementById('question').value.trim();
+            const hasTranscript = document.getElementById('transcript-section');
+            
+            if (!hasTranscript) {
+                showToast('⚠️ Please generate a transcript first', 'error');
+                e.preventDefault();
+                return;
+            }
+            
+            if (!question) {
+                showToast('⚠️ Please enter a question', 'error');
+                e.preventDefault();
+                return;
+            }
+            
+            document.getElementById('question-spinner').style.display = 'block';
+        });
+
+        // Clear all functionality
+        document.getElementById('clear-all-btn').addEventListener('click', function() {
+            // Clear question input
+            document.getElementById('question').value = '';
+            
+            // Clear Q&A history display
+            const qaContent = document.getElementById('qa-history-content');
+            qaContent.innerHTML = '<div class="qa-placeholder">No questions asked yet. Generate a transcript first, then ask questions about the video content.</div>';
+            
+            // Clear URL input
+            document.getElementById('youtube_url').value = '';
+            
+            // Hide sections
+            const summarySection = document.getElementById('summary-section');
+            const transcriptSection = document.getElementById('transcript-section');
+            
+            if (summarySection) summarySection.style.display = 'none';
+            if (transcriptSection) transcriptSection.style.display = 'none';
+            
+            showToast('✅ All content cleared', 'success');
+        });
+
+        // Auto-resize textarea
+        const questionTextarea = document.getElementById('question');
+        questionTextarea.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+        });
+
+        // Hide spinners on page load
+        window.addEventListener('load', function() {
+            document.getElementById('transcript-spinner').style.display = 'none';
+            document.getElementById('question-spinner').style.display = 'none';
+        });
+
+        // Show error/success messages
+        {% if error_message %}
+        showToast("{{ error_message|escape }}", 'error');
+        {% endif %}
+        
+        {% if success_message %}
+        showToast("{{ success_message|escape }}", 'success');
+        {% endif %}
+    </script>
+</body>
+</html>
