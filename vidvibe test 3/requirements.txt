@@ -1,7 +1,0 @@
-Flask
-openai
-yt-dlp
-whisper
-python-dotenv
-youtube-transcript-api
-gTTS
