@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Vid Vibe - YouTube Teacher Bot</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <button id="dark-mode-toggle" aria-label="Toggle dark mode"><span class="icon">☀</span></button>
+    <h1><span class="logo-hat">🎓</span> <span class="logo-name">Vid Vibe</span></h1>
+    <div id="toast-container"></div>
+    {% if error_message %}
+    <div class="error-message-container">
+        <div class="error-message">
+            <span class="error-icon">⚠️</span>
+            <span class="error-text">{{ error_message }}</span>
+        </div>
+    </div>
+    {% endif %}
+    <div class="app-grid">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <form method="post" id="transcript-form" class="sidebar-section">
+                <label for="youtube_url" class="sidebar-label" style="font-weight:bold; font-size:0.97rem;">Paste link here</label>
+                <div class="sidebar-input-wrapper" style="width:100%;display:flex;flex-direction:column;gap:0.5rem;">
+                    <input type="text" name="youtube_url" id="youtube_url" class="sidebar-input" placeholder="https://youtube.com/..." style="font-size:0.97rem;">
+                    <button type="submit" class="sidebar-btn" id="generate-transcript-btn" style="font-weight:bold; font-size:0.97rem;">Generate Transcript</button>
+                </div>
+                <div class="spinner" id="transcript-spinner" style="display:none;">
+                    <span class="spinner-circle"></span>
+                </div>
+            </form>
+            {% if summary %}
+            <section class="sidebar-section summary-box" id="summary-box">
+                <h3 style="font-weight:bold; font-size:0.97rem;">Summary</h3>
+                <p class="summary-text" style="font-size:0.97rem;">{{ summary|safe }}</p>
+            </section>
+            <section class="sidebar-section audio-section" id="audio-section">
+                <audio controls class="minimal-audio-player" id="audio-player" style="width:100%;">
+                    <source src="/audio" type="audio/mpeg">
+                    Your browser does not support the audio element.
+                </audio>
+                <a href="/download-audio" class="audio-download-btn" id="download-audio-btn" style="font-weight:bold; font-size:0.97rem;">Download Audio</a>
+            </section>
+            {% endif %}
+            {% if transcript %}
+            <section class="sidebar-section transcript-section" id="transcript-section">
+                <h3 style="font-weight:bold; font-size:0.97rem;">Transcript</h3>
+                <pre class="transcript-text" style="font-size:0.97rem;">{{ transcript[:3000] }}{% if transcript|length > 3000 %}...{% endif %}</pre>
+                <a href="/download" class="transcript-download-btn" id="download-transcript-btn" style="font-weight:bold; font-size:0.97rem;">Download Transcript</a>
+            </section>
+            <button id="clear-all-btn" class="sidebar-btn" style="margin-bottom:1rem;">Clear All</button>
+            {% endif %}
+            <div class="sidebar-bottom-spacer"></div>
+            <form method="post" id="ask-form" class="sidebar-ask-form" style="margin-top:0;display:none;">
+                <label for="model" class="model-label" style="font-weight:bold; font-size:0.97rem;">Select Model:</label>
+                <select name="model" class="model-select" style="font-size:0.97rem;">
+                    <option value="gpt-3.5-turbo" {% if selected_model == 'gpt-3.5-turbo' %}selected{% endif %}>GPT-3.5 (Fast, Cheaper)</option>
+                    <option value="gpt-4" {% if selected_model == 'gpt-4' %}selected{% endif %}>GPT-4 (More Accurate)</option>
+                </select>
+            </form>
+        </aside>
+        <!-- Main Content -->
+        <main class="main-content" id="main-content">
+            <section class="qa-history-container" id="qa-history-container">
+                <h3 class="qa-history-title">Previously Generated Questions & Answers</h3>
+                <div class="qa-history-scroll" id="qa-history-scroll">
+                    {% if qa_history and qa_history|length > 0 %}
+                        {% for qa in qa_history %}
+                            <div class="qa-item">
+                                <div class="qa-question"><strong>Q:</strong> {{ qa.question }}</div>
+                                <div class="qa-answer"><strong>A:</strong> {{ qa.answer|safe }}</div>
+                            </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="qa-placeholder">No questions asked yet.</div>
+                    {% endif %}
+                </div>
+            </section>
+            <section class="question-input-section" id="question-input-section">
+                <form method="post" id="question-form" style="display:flex;flex-direction:column;gap:0.7rem;">
+                    <label for="question" class="question-label">Type question here</label>
+                    <textarea name="question" id="question" class="question-input" placeholder="What is explained in this video?" rows="1" style="resize:none; overflow:hidden;"></textarea>
+                    <div id="question-char-count" class="question-char-count"></div>
+                    <label for="model" class="model-label" style="font-weight:bold; font-size:0.97rem;">Select Model:</label>
+                    <select name="model" class="model-select" style="font-size:0.97rem;">
+                        <option value="gpt-3.5-turbo" {% if selected_model == 'gpt-3.5-turbo' %}selected{% endif %}>GPT-3.5 (Fast, Cheaper)</option>
+                        <option value="gpt-4" {% if selected_model == 'gpt-4' %}selected{% endif %}>GPT-4 (More Accurate)</option>
+                    </select>
+                    <button type="submit" class="ask-btn" id="ask-btn" style="font-weight:bold; font-size:0.97rem; margin-top:0.7rem;align-self:stretch;">Ask</button>
+                </form>
+            </section>
+        </main>
+    </div>
+<script>
+function scrollToAnswerBox() {
+    const answerBox = document.querySelector('.answer-box');
+    if (answerBox) {
+        answerBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+}
+
+// Spinner logic
+function hideAllSpinners() {
+    document.getElementById('transcript-spinner').style.display = 'none';
+    document.getElementById('question-spinner').style.display = 'none';
+}
+
+document.getElementById('transcript-form').addEventListener('submit', function() {
+    document.getElementById('transcript-spinner').style.display = 'block';
+    document.getElementById('question-spinner').style.display = 'none';
+});
+document.getElementById('question-form').addEventListener('submit', function() {
+    document.getElementById('question-spinner').style.display = 'block';
+    document.getElementById('transcript-spinner').style.display = 'none';
+});
+
+// --- Toast Notification System with Close Button ---
+function showToast(message, type = 'success') {
+    const toastContainer = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = 'toast ' + (type === 'error' ? 'toast-error' : 'toast-success');
+    toast.innerHTML = message + '<button class="toast-close" aria-label="Close">&times;</button>';
+    toastContainer.appendChild(toast);
+    const closeBtn = toast.querySelector('.toast-close');
+    let timeout = setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 400);
+    }, 3400);
+    closeBtn.addEventListener('click', () => {
+        clearTimeout(timeout);
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 400);
+    });
+}
+
+// --- YouTube URL validation ---
+function isValidYouTubeUrl(url) {
+    // Accepts most YouTube video URL formats
+    const pattern = /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)[A-Za-z0-9_-]{11}(\S*)?$/;
+    // Also allow URLs with extra params after the video ID
+    // Accepts: https://www.youtube.com/watch?v=VIDEOID, https://youtu.be/VIDEOID, etc.
+    return pattern.test(url.trim());
+}
+
+// --- Prevent empty/invalid YouTube link on transcript form ---
+document.getElementById('transcript-form').addEventListener('submit', function(e) {
+    const url = document.getElementById('youtube_url').value.trim();
+    if (!url) {
+        hideAllSpinners();
+        showToast('⚠ Please enter a YouTube link before submitting.', 'error');
+        e.preventDefault();
+        return false;
+    }
+    if (!isValidYouTubeUrl(url)) {
+        hideAllSpinners();
+        showToast('❌ Invalid YouTube link. Please check and try again.', 'error');
+        e.preventDefault();
+        return false;
+    }
+});
+
+// --- Prevent question before transcript is loaded ---
+document.getElementById('question-form').addEventListener('submit', function(e) {
+    const transcriptCard = document.querySelector('.transcript-card');
+    const question = document.getElementById('question').value.trim();
+    if (!transcriptCard || transcriptCard.style.display === 'none') {
+        hideAllSpinners();
+        showToast('⚠ Please submit a YouTube link first to load the video transcript.', 'error');
+        e.preventDefault();
+        return false;
+    }
+    if (!question) {
+        hideAllSpinners();
+        showToast('⚠ Please enter a question before submitting.', 'error');
+        e.preventDefault();
+        return false;
+    }
+});
+
+// Dark mode toggle logic
+const darkModeToggle = document.getElementById('dark-mode-toggle');
+const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+function setDarkMode(enabled) {
+    if (enabled) {
+        document.body.classList.add('dark-mode');
+        document.body.classList.remove('light-mode');
+        darkModeToggle.innerHTML = '🌙';
+        localStorage.setItem('darkMode', 'true');
+    } else {
+        document.body.classList.remove('dark-mode');
+        document.body.classList.add('light-mode');
+        darkModeToggle.innerHTML = '☀';
+        localStorage.setItem('darkMode', 'false');
+    }
+}
+// On load, set mode from localStorage or system preference and set icon
+window.addEventListener('DOMContentLoaded', () => {
+    const saved = localStorage.getItem('darkMode');
+    if (saved === 'true' || (saved === null && prefersDark)) {
+        setDarkMode(true);
+    } else {
+        setDarkMode(false);
+    }
+});
+darkModeToggle.addEventListener('click', () => {
+    setDarkMode(!document.body.classList.contains('dark-mode'));
+    triggerLogoAnimation();
+});
+
+// Auto-expand textarea and character counter
+const questionTextarea = document.getElementById('question');
+const charCount = document.getElementById('question-char-count');
+if (questionTextarea && charCount) {
+    const maxLines = 6;
+    const lineHeight = 24; // px, adjust if needed
+    questionTextarea.addEventListener('input', function() {
+        this.style.height = 'auto';
+        let lines = (this.value.match(/\n/g) || []).length + 1;
+        if (lines > maxLines) lines = maxLines;
+        this.style.height = Math.min(this.scrollHeight, maxLines * lineHeight) + 'px';
+        charCount.textContent = this.value.length + ' characters';
+    });
+    // Initialize
+    questionTextarea.dispatchEvent(new Event('input'));
+}
+
+// Clear All functionality
+document.getElementById('clear-all-btn').addEventListener('click', function() {
+    // Clear YouTube link input
+    const youtubeUrl = document.getElementById('youtube_url');
+    if (youtubeUrl) youtubeUrl.value = '';
+    // Clear question textarea and counter
+    const question = document.getElementById('question');
+    const charCount = document.getElementById('question-char-count');
+    if (question) {
+        question.value = '';
+        question.style.height = 'auto';
+        if (charCount) charCount.textContent = '0 characters';
+    }
+    // Hide summary box
+    const summaryBox = document.getElementById('summary-box');
+    if (summaryBox) summaryBox.style.display = 'none';
+    // Hide transcript box
+    const transcriptSection = document.getElementById('transcript-section');
+    if (transcriptSection) transcriptSection.style.display = 'none';
+    // Hide audio section
+    const audioSection = document.getElementById('audio-section');
+    if (audioSection) audioSection.style.display = 'none';
+    // Clear QnA history
+    const qaHistoryScroll = document.getElementById('qa-history-scroll');
+    if (qaHistoryScroll) qaHistoryScroll.innerHTML = '<div class="qa-placeholder">No questions asked yet.</div>';
+    // Optionally, clear session QnA via fetch if you want to clear server-side as well
+    // fetch('/clear_qna', {method: 'POST'});
+});
+
+// Hide spinner when summary, transcript, or answer is rendered
+window.addEventListener('DOMContentLoaded', () => {
+    const mainContainer = document.body; // You can scope this to a more specific container if needed
+    const observer = new MutationObserver((mutationsList, observer) => {
+        for (const mutation of mutationsList) {
+            if (mutation.type === 'childList') {
+                const answerCard = document.querySelector('.answer-card');
+                const summaryCard = document.querySelector('.summary-card');
+                const transcriptCard = document.querySelector('.transcript-card');
+                const errorContainer = document.querySelector('.error-message-container');
+                
+                if (answerCard || summaryCard || transcriptCard || errorContainer) {
+                    hideAllSpinners();
+                    // Scroll to summary if just generated
+                    if (summaryCard && summaryCard.offsetParent !== null && !answerCard) {
+                        summaryCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                    // Scroll to answer if just answered
+                    if (answerCard && answerCard.offsetParent !== null) {
+                        answerCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                    // Scroll to error if there's an error
+                    if (errorContainer && errorContainer.offsetParent !== null) {
+                        errorContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                    observer.disconnect();
+                    break;
+                }
+            }
+        }
+    });
+    observer.observe(mainContainer, { childList: true, subtree: true });
+});
+</script>
+<script>
+// Animate the logo name from behind the hat every 1 minute
+function triggerLogoAnimation() {
+  const logoName = document.querySelector('.logo-name');
+  if (!logoName) return;
+  logoName.classList.remove('animate-from-hat');
+  // Force reflow to restart animation
+  void logoName.offsetWidth;
+  logoName.classList.add('animate-from-hat');
+}
+setInterval(triggerLogoAnimation, 60000); // every 1 minute
+// Optionally, trigger once on load
+window.addEventListener('DOMContentLoaded', () => {
+  setTimeout(triggerLogoAnimation, 500);
+});
+</script>
+{% if success_message %}
+<script>showToast("{{ success_message|escape }}", 'success');</script>
+{% endif %}
+{% if error_message %}
+<script>showToast("{{ error_message|escape }}", 'error');</script>
+{% endif %}
+</body>
+</html>
